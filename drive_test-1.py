@@ -5,9 +5,11 @@ import threading
 import random
 import sys, select, os
 import matplotlib
-#matplotlib.use('Agg')
+#matplotlib.use('MacOSX')
+
 import pylab
 from pylab import *
+from pylab import get_current_fig_manager
 import nxt
 from nxt import *
 
@@ -24,6 +26,8 @@ soundport = nxt.PORT_2
 num_plotted = 100
 num_retained = 1000 # unused at moment
 samples_per_s = 5
+firstplot = True
+TerminateThreads = False
 
 # mutex for sensor thread and graph access to data
 lock = threading.Lock()
@@ -86,12 +90,12 @@ l_values=[]
 
 def get_sensor_data():
     global u, s, t, l, l_values, u_values, s_values, t_values, data_index, lock, samples_per_s
-    while True: 
+    while not TerminateThreads: 
       if brick is not None:
         for i in range(0,5):
-            val = u.get_sample()
+          val = u.get_distance()
         touch = t.is_pressed()
-        snd = s.get_sample()*100.0/255.0
+        snd = s.get_loudness()*100.0/255.0
         lght = l.get_lightness()
       else:
         val = 50 + random()*5
@@ -107,14 +111,16 @@ def get_sensor_data():
       t_values.append(60 if touch else 40)
       data_index += 1
       lock.release()
-      print "\nsound ", snd, "\ndist ", val, "\nbutton ", touch, "\nlight ", lght
+      print "\nsound\t", snd, "\ndist\t", val, "\nbutton\t", touch, "\nlight\t", lght
       time.sleep(1.0/samples_per_s)
 
 def RealtimePlotter():
-    global l_values, u_values, s_values, t_values, data_index, lock, samples_per_s
+    global l_values, u_values, s_values, t_values, data_index, lock, samples_per_s, firstplot
     if (data_index<0):
-        return
-    while True:
+      print "Skipping plot due to lack of data"
+      time.sleep(1.0/samples_per_s)
+      return
+    while not TerminateThreads: 
       lock.acquire()
       min_index = max(data_index + 1 - num_plotted, 0)
       max_index = max(num_plotted, data_index + 1)
@@ -126,6 +132,11 @@ def RealtimePlotter():
       lock.release()
       ax.axis([min_index, max_index, 0, 100])
       manager.canvas.draw()
+      if firstplot:
+        # raise window to be in front ... (doesn't work on mac)
+        fm = get_current_fig_manager()
+        fm.show()        
+        firstplot = False
       time.sleep(1.0/samples_per_s)
 
 def forward(b, power, time):
@@ -143,15 +154,14 @@ def reverse(b, power, time):
 # disable blocking
 pylab.ion()
 pylab.show(block=False)
-#RealtimePlotter()
-#manager.canvas.draw()
 
 if __name__ == '__main__':
   # start a thread which will sample all the lego sensors
   thread1 = threading.Thread(target=get_sensor_data)
   thread1.daemon = True
   thread1.start()
-# start a thread which will continuously plot lege sensor data
+
+  # start a thread which will continuously plot lege sensor data
   thread2 = threading.Thread(target=RealtimePlotter)
   thread2.daemon = True
   thread2.start()
@@ -159,7 +169,6 @@ if __name__ == '__main__':
   state = 0
   try:
       while True:
-#            RealtimePlotter()
           if brick is not None:
             if (s.get_sample()*100.0/255.0)>99:
                 if (state==0):
@@ -172,4 +181,6 @@ if __name__ == '__main__':
                     time.sleep(0.5)
 
   except KeyboardInterrupt:
-      pass
+    TerminateThreads = True 
+    print "Terminating threads and exiting"
+    pass
